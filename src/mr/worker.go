@@ -1,7 +1,11 @@
 package mr
 
+import "os"
 import "fmt"
 import "log"
+import "time"
+import "encoding/json"
+import "io/ioutil"
 import "net/rpc"
 import "hash/fnv"
 
@@ -30,12 +34,71 @@ func ihash(key string) int {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
+	state := Reply{Workerid: -1}
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
+	for state.Complete == false {
+		request_task(&state)
+		if (state.Complete == true) {
+			break
+		}
+		fmt.Printf("workerid: %d\n", state.Workerid)
+		fmt.Printf("Filename: %s\n", state.Filename)
 
+		file, err := os.Open(state.Filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", state.Filename)
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", state.Filename)
+		}
+		file.Close()
+		kva := mapf(state.Filename, string(content))
+
+		//写入文件
+		for i := 0; i < state.NReduce; i++ {
+			filename := fmt.Sprintf("mr-intermidiate/mr-%d-%d.json", state.Workerid, i)
+			if _, err := os.Stat(filename); err == nil {
+				file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+			} else {
+				file, err = os.Create(filename)
+				if err != nil {
+					fmt.Println("Error creating file:", err)
+					return
+				}
+			}
+			enc := json.NewEncoder(file)
+			for _, v := range kva {
+				tmp := ihash(v.Key) % state.NReduce
+				if tmp == i {
+					err = enc.Encode(&v)
+				}
+			}
+
+			//file.Seek(0, 0)
+
+
+			file.Close()
+		}
+		complete_task(&state)
+		fmt.Printf("\n")
+
+		time.Sleep(time.Second)
+	}
+}
+
+func request_task(state *Reply) {
+	args := Args{Workerid : state.Workerid}
+	call("Coordinator.Distribute", &args, state)
+}
+
+func complete_task(state *Reply) {
+	fmt.Printf("complete %s\n", state.Filename)
+	args := Args{Filename: state.Filename}
+	call("Coordinator.Complete_task", &args, state)
 }
 
 //

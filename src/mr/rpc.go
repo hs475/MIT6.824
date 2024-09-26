@@ -23,6 +23,20 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
+type Args struct {
+	Workerid int
+	Worktype string
+	Filename string
+}
+
+type Reply struct {
+	Workerid int
+	NReduce int
+	Complete bool
+	Filename string
+	Worktype string
+}
+
 
 
 // Cook up a unique-ish UNIX-domain socket name
