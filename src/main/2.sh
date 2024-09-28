@@ -1,4 +1,2 @@
-go build -race -buildmode=plugin ../mrapps/wc.go
-rm mr-out*
-go run -race mrsequential.go wc.so pg-*.txt
-more mr-out-0
+go run -race mrsequential.go wc.so pg-1*.txt
+cat mrout/mr-out-* | sort | more

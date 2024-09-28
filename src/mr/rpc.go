@@ -25,6 +25,7 @@ type ExampleReply struct {
 // Add your RPC definitions here.
 type Args struct {
 	Workerid int
+	Reduce_num int
 	Worktype string
 	Filename string
 }
@@ -32,6 +33,7 @@ type Args struct {
 type Reply struct {
 	Workerid int
 	NReduce int
+	Reduce_num int
 	Complete bool
 	Filename string
 	Worktype string

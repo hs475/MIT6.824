@@ -1,55 +1,101 @@
 package mr
 
-import "log"
-//import "fmt"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	"time"
+	"log"
+	"fmt"
+	"net"
+	"os"
+	"sync"
+	"net/rpc"
+	"net/http"
+)
 
 var idt int
 
 type Coordinator struct {
 	// Your definitions here.
 	Filename [] string
-	Complete_flag bool
-	Complete [] int
+	Complete_map_flag bool
+	Complete_map [] int
+	Complete_reduce [] int
+	Complete_reduce_flag bool
 	Nreduce int
+	mu sync.Mutex
+	quit chan struct{}
+	wg sync.WaitGroup
 }
 
 // Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) Distribute(args *Args, reply *Reply) error {
-	if (c.Complete_flag == true) {
+	c.mu.Lock()
+    defer c.mu.Unlock()
+	if c.Complete_map_flag && c.Complete_reduce_flag {
 		reply.Complete = true
 		return nil
 	}
+	reply.Worktype = "none"
 	if (args.Workerid == -1) {
 		reply.Workerid = idt
 		idt++
 	}
-	for i := 0; i < len(c.Filename); i++ {
-		if c.Complete[i] == 0 {
-			reply.Filename = c.Filename[i]
-			break
+	if !c.Complete_map_flag {
+		for i := 0; i < len(c.Filename); i++ {
+			if c.Complete_map[i] == 0 {
+				c.Complete_map[i] = 2
+				reply.Filename = c.Filename[i]
+				reply.Worktype = "map"
+				break
+			}
+		}
+		reply.Complete = false
+		reply.NReduce = c.Nreduce
+		return nil
+	} else {
+		if !c.Complete_reduce_flag {
+			for i := 0; i < c.Nreduce; i++ {
+				if c.Complete_reduce[i] == 0 {
+					c.Complete_reduce[i] = 2
+					reply.Worktype = "reduce"
+					reply.Filename = fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-mid/mr-*-%d.json", i)
+					reply.Reduce_num = i
+					break
+				}
+			}
 		}
 	}
-	reply.Complete = false
-	reply.NReduce = c.Nreduce
+
 	return nil
 }
 
-func (c *Coordinator) Complete_task(args *Args, reply *Reply) error {
+func (c *Coordinator) Complete_map_task(args *Args, reply *Reply) error {
+	c.mu.Lock()
+    defer c.mu.Unlock()
 	for i := 0; i < len(c.Filename); i++ {
 		if (args.Filename == c.Filename[i] ) {
-			c.Complete[i] = 1
+			c.Complete_map[i] = 1
 		}
 	}
 	for i := 0; i < len(c.Filename); i++ {
-		if c.Complete[i] == 0 {
+		if c.Complete_map[i] != 1 {
 			return nil
 		}
 	}
-	c.Complete_flag = true
+	c.Complete_map_flag = true
+	return nil
+}
+
+func (c *Coordinator) Complete_reduce_task(args *Args, reply *Reply) error {
+	c.mu.Lock()
+    defer c.mu.Unlock()
+	c.Complete_reduce[args.Reduce_num] = 1
+	for i := 0; i < c.Nreduce; i++ {
+		if c.Complete_reduce[i] != 1 {
+			return nil
+		}
+	}
+	time.Sleep(time.Second)
+	c.Complete_reduce_flag = true
 	return nil
 }
 
@@ -84,9 +130,17 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
+	c.mu.Lock()
+    defer c.mu.Unlock()
 	ret := true
 
 	// Your code here.
+	if c.Complete_map_flag && c.Complete_reduce_flag {
+		fmt.Printf("stop\n")
+		ret = false
+		close(c.quit)
+		c.wg.Wait()
+	}
 	return ret
 }
 
@@ -99,9 +153,12 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	idt = 1
 	c := Coordinator{
 		Filename: files,
-		Complete: make([]int, len(files)),
+		Complete_map: make([]int, len(files)),
+		Complete_reduce: make([]int, nReduce + 1),
 		Nreduce: nReduce,
-		Complete_flag: false,
+		Complete_map_flag: false,  
+		Complete_reduce_flag: false,
+		quit:  make(chan struct{}),
 	}
 
 	// Your code here.

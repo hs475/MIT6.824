@@ -1,14 +1,18 @@
 package mr
 
-import "os"
-import "fmt"
-import "log"
-import "time"
-import "encoding/json"
-import "io/ioutil"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	//"time"
+	"os"
+	"fmt"
+	"log"
+//import "time"
+	"sort"
+	"path/filepath"
+	"encoding/json"
+	"io/ioutil"
+	"net/rpc"
+	"hash/fnv"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -17,6 +21,13 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -39,66 +50,122 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
-	for state.Complete == false {
-		request_task(&state)
-		if (state.Complete == true) {
+	for !state.Complete {
+		err := request_task(&state)
+		if (state.Complete || !err) {
 			break
 		}
-		fmt.Printf("workerid: %d\n", state.Workerid)
-		fmt.Printf("Filename: %s\n", state.Filename)
 
-		file, err := os.Open(state.Filename)
-		if err != nil {
-			log.Fatalf("cannot open %v", state.Filename)
-		}
-		content, err := ioutil.ReadAll(file)
-		if err != nil {
-			log.Fatalf("cannot read %v", state.Filename)
-		}
-		file.Close()
-		kva := mapf(state.Filename, string(content))
-
-		//写入文件
-		for i := 0; i < state.NReduce; i++ {
-			filename := fmt.Sprintf("mr-intermidiate/mr-%d-%d.json", state.Workerid, i)
-			if _, err := os.Stat(filename); err == nil {
-				file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-			} else {
-				file, err = os.Create(filename)
-				if err != nil {
-					fmt.Println("Error creating file:", err)
-					return
-				}
+		//map function
+		if state.Worktype == "map" {
+			tmp := []KeyValue{}
+			file, err := os.Open(state.Filename)
+			if err != nil {
+				log.Fatalf("cannot open %v", state.Filename)
 			}
-			enc := json.NewEncoder(file)
-			for _, v := range kva {
-				tmp := ihash(v.Key) % state.NReduce
-				if tmp == i {
-					err = enc.Encode(&v)
-				}
+			content, err := ioutil.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", state.Filename)
 			}
-
-			//file.Seek(0, 0)
-
-
 			file.Close()
+			kva := mapf(state.Filename, string(content))
+			tmp = append(tmp, kva...)
+			kva = tmp
+			//写入文件
+			for i := 0; i < state.NReduce; i++ {
+				filename := fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-mid/mr-%d-%d.json", state.Workerid, i)
+				if _, err := os.Stat(filename); err == nil {
+					file, _ = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+				} else {
+					file, err = os.Create(filename)
+					if err != nil {
+						fmt.Println("Error creating file:", err)
+						return
+					}
+				}
+				enc := json.NewEncoder(file)
+				for _, v := range kva {
+					tmp := ihash(v.Key) % state.NReduce
+					if tmp == i {
+						_ = enc.Encode(&v)
+					}
+				}
+				defer file.Close()
+				//file.Seek(0, 0)
+			}
+			complete_map_task(&state)
+		//reduce function
+		} else {
+			if state.Worktype == "reduce" {
+				files, err := filepath.Glob(state.Filename)
+				if err != nil {
+					log.Fatal(err)
+				}
+				var kva []KeyValue
+				for _, file := range(files) {
+					file, err := os.Open(file)
+					if err != nil {
+						log.Fatal(err)
+					}
+					dec := json.NewDecoder(file)
+					for {
+						var kv KeyValue
+						if err := dec.Decode(&kv); err != nil {
+						break
+						}
+						kva = append(kva, kv)
+					}
+					file.Close()
+				}
+				sort.Sort(ByKey(kva))
+				intermediate := kva
+				i := 0
+				var ofile *os.File
+				oname := fmt.Sprintf("mr-out-%d", state.Reduce_num)
+				for i < len(intermediate) {
+					j := i + 1
+					for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+						j++
+					}
+					values := []string{}
+					for k := i; k < j; k++ {
+						values = append(values, intermediate[k].Value)
+					}
+					output := reducef(intermediate[i].Key, values)
+					// this is the correct format for each line of Reduce output.
+					if _, err := os.Stat(oname); err == nil {
+						ofile, _ = os.OpenFile(oname, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+						fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+						ofile.Close()
+					} else {
+						ofile, _ = os.Create(oname)
+						fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+						ofile.Close()
+					}
+					ofile.Close()
+					i = j
+				}
+				ofile.Close()
+				complete_reduce_task(&state)
+			}
 		}
-		complete_task(&state)
-		fmt.Printf("\n")
-
-		time.Sleep(time.Second)
 	}
 }
 
-func request_task(state *Reply) {
+func request_task(state *Reply) bool{
 	args := Args{Workerid : state.Workerid}
-	call("Coordinator.Distribute", &args, state)
+	err := call("Coordinator.Distribute", &args, state)
+	return err
 }
 
-func complete_task(state *Reply) {
-	fmt.Printf("complete %s\n", state.Filename)
+func complete_map_task(state *Reply) {
 	args := Args{Filename: state.Filename}
-	call("Coordinator.Complete_task", &args, state)
+	call("Coordinator.Complete_map_task", &args, state)
+}
+
+func complete_reduce_task(state *Reply) {
+	args := Args{Reduce_num: state.Reduce_num}
+	call("Coordinator.Complete_reduce_task", &args, state)
 }
 
 //
