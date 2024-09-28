@@ -136,8 +136,8 @@ func (c *Coordinator) Done() bool {
 
 	// Your code here.
 	if c.Complete_map_flag && c.Complete_reduce_flag {
-		fmt.Printf("stop\n")
 		ret = false
+		os.RemoveAll("/home/jcw/jcw/6.824/src/main/mr-mid")
 		close(c.quit)
 		c.wg.Wait()
 	}
@@ -162,6 +162,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	// Your code here.
+	os.Mkdir("/home/jcw/jcw/6.824/src/main/mr-mid", 0755)
 
 
 	c.server()
