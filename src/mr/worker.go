@@ -73,7 +73,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			kva = tmp
 			//写入文件
 			for i := 0; i < state.NReduce; i++ {
-				filename := fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-mid/mr-%d-%d.json", state.Workerid, i)
+				filename := fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-tmp/mr-mid/mr-%d-%d.json", state.Workerid, i)
 				if _, err := os.Stat(filename); err == nil {
 					file, _ = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 				} else {

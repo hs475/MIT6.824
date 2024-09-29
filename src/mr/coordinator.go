@@ -57,7 +57,7 @@ func (c *Coordinator) Distribute(args *Args, reply *Reply) error {
 				if c.Complete_reduce[i] == 0 {
 					c.Complete_reduce[i] = 2
 					reply.Worktype = "reduce"
-					reply.Filename = fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-mid/mr-*-%d.json", i)
+					reply.Filename = fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-tmp/mr-mid/mr-*-%d.json", i)
 					reply.Reduce_num = i
 					break
 				}
@@ -137,7 +137,7 @@ func (c *Coordinator) Done() bool {
 	// Your code here.
 	if c.Complete_map_flag && c.Complete_reduce_flag {
 		ret = false
-		os.RemoveAll("/home/jcw/jcw/6.824/src/main/mr-mid")
+		os.RemoveAll("/home/jcw/jcw/6.824/src/main/mr-tmp/mr-mid")
 		close(c.quit)
 		c.wg.Wait()
 	}
@@ -162,7 +162,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	// Your code here.
-	os.Mkdir("/home/jcw/jcw/6.824/src/main/mr-mid", 0755)
+	os.Mkdir("/home/jcw/jcw/6.824/src/main/mr-tmp/mr-mid", 0755)
 
 
 	c.server()
