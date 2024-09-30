@@ -1,11 +1,10 @@
 package mr
 
 import (
-	//"time"
+	"time"
 	"os"
 	"fmt"
 	"log"
-//import "time"
 	"sort"
 	"path/filepath"
 	"encoding/json"
@@ -52,12 +51,20 @@ func Worker(mapf func(string, string) []KeyValue,
 	// CallExample()
 	for !state.Complete {
 		err := request_task(&state)
+		if !err {
+			break
+		}
 		if (state.Complete || !err) {
 			break
 		}
 
 		//map function
 		if state.Worktype == "map" {
+			for i := 1; i <= state.NReduce; i++ {
+				filename := fmt.Sprintf("mr-%d-%d.json", state.Workerid, i)
+				file, _ := os.Create(filename) // 创建文件
+				file.Close()
+			}
 			tmp := []KeyValue{}
 			file, err := os.Open(state.Filename)
 			if err != nil {
@@ -72,35 +79,38 @@ func Worker(mapf func(string, string) []KeyValue,
 			tmp = append(tmp, kva...)
 			kva = tmp
 			//写入文件
-			for i := 0; i < state.NReduce; i++ {
-				filename := fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-tmp/mr-mid/mr-%d-%d.json", state.Workerid, i)
+			var tmpflag1 bool = true
+			for i := 1; i <= state.NReduce; i++ {
+				filename := fmt.Sprintf("/home/jcw/jcw/6.824/src/main/mr-tmp/mr-%d-%d.json", state.Workerid, i)
 				if _, err := os.Stat(filename); err == nil {
 					file, _ = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 				} else {
-					file, err = os.Create(filename)
-					if err != nil {
-						fmt.Println("Error creating file:", err)
-						return
-					}
+					tmpflag1 = false
+					break
 				}
 				enc := json.NewEncoder(file)
 				for _, v := range kva {
-					tmp := ihash(v.Key) % state.NReduce
+					tmp := ihash(v.Key) % state.NReduce + 1
 					if tmp == i {
 						_ = enc.Encode(&v)
 					}
 				}
-				defer file.Close()
+				file.Close()
 				//file.Seek(0, 0)
 			}
-			complete_map_task(&state)
+			if tmpflag1 {
+				res := complete_map_task(&state)
+				if !res {
+					break
+				}
+			}
 		//reduce function
 		} else {
 			if state.Worktype == "reduce" {
-				files, err := filepath.Glob(state.Filename)
-				if err != nil {
-					log.Fatal(err)
-				}
+				oname := fmt.Sprintf("mr-out-%d-%d", state.Reduce_num, state.Workerid)
+				ofile, _ := os.Create(oname)
+				ofile.Close()
+				files, _ := filepath.Glob(fmt.Sprintf("mr-*-%d.json", state.Reduce_num))
 				var kva []KeyValue
 				for _, file := range(files) {
 					file, err := os.Open(file)
@@ -120,8 +130,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				sort.Sort(ByKey(kva))
 				intermediate := kva
 				i := 0
-				var ofile *os.File
-				oname := fmt.Sprintf("mr-out-%d", state.Reduce_num)
+				var tmpflag2 bool = true
 				for i < len(intermediate) {
 					j := i + 1
 					for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
@@ -138,17 +147,20 @@ func Worker(mapf func(string, string) []KeyValue,
 						fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
 						ofile.Close()
 					} else {
-						ofile, _ = os.Create(oname)
-						fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-						ofile.Close()
+						tmpflag2 = false
+						break
 					}
-					ofile.Close()
 					i = j
 				}
-				ofile.Close()
-				complete_reduce_task(&state)
+				if tmpflag2 {
+					res := complete_reduce_task(&state)
+					if !res {
+						break
+					}
+				}
 			}
 		}
+		time.Sleep(time.Second / 5)
 	}
 }
 
@@ -158,14 +170,22 @@ func request_task(state *Reply) bool{
 	return err
 }
 
-func complete_map_task(state *Reply) {
-	args := Args{Filename: state.Filename}
-	call("Coordinator.Complete_map_task", &args, state)
+func complete_map_task(state *Reply) bool{
+	args := Args{
+		Filename: state.Filename,
+		Workerid: state.Workerid,
+	}
+	err := call("Coordinator.Complete_map_task", &args, state)
+	return err
 }
 
-func complete_reduce_task(state *Reply) {
-	args := Args{Reduce_num: state.Reduce_num}
-	call("Coordinator.Complete_reduce_task", &args, state)
+func complete_reduce_task(state *Reply) bool{
+	args := Args{
+		Reduce_num: state.Reduce_num,
+		Workerid: state.Workerid,
+	}
+	err := call("Coordinator.Complete_reduce_task", &args, state)
+	return err
 }
 
 //
@@ -201,7 +221,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		return false
 	}
 	defer c.Close()
 
